@@ -12,8 +12,8 @@ import config
 class DangerAssessment:
     """Evaluación de peligro de un objeto detectado."""
     detection: Detection
-    danger_level: str  # "ALTO", "MEDIO", "BAJO"
-    danger_score: float  # 0-100
+    danger_level: str  
+    danger_score: float
     message: str
 
 
@@ -31,21 +31,16 @@ class DangerAssessor:
         Returns:
             Evaluación de peligro o None si el objeto no es relevante
         """
-        # Obtener nivel base de peligro del objeto
         base_danger = config.DANGEROUS_OBJECTS.get(detection.class_name, 1)
         
-        # Calcular multiplicador por cercanía (área relativa)
         proximity_multiplier = self._get_proximity_multiplier(detection.relative_area)
         
-        # Calcular multiplicador por posición (centro = más peligroso)
         position_multiplier = self._get_position_multiplier(
             detection.center[0], frame_width
         )
         
-        # Calcular score final (0-100)
         danger_score = min(100, base_danger * proximity_multiplier * position_multiplier)
         
-        # Determinar nivel de peligro
         if danger_score >= 60:
             danger_level = "ALTO"
         elif danger_score >= 30:
@@ -53,7 +48,6 @@ class DangerAssessor:
         else:
             danger_level = "BAJO"
         
-        # Generar mensaje
         message = config.VOICE_MESSAGES[danger_level].format(
             objeto=self._translate_object(detection.class_name)
         )
@@ -81,13 +75,10 @@ class DangerAssessor:
         Calcula multiplicador basado en posición horizontal.
         Objetos en el centro son más peligrosos (frente al usuario).
         """
-        # Normalizar posición (0 = izquierda, 1 = derecha)
         normalized_x = center_x / frame_width
         
-        # Distancia al centro (0 = centro, 0.5 = borde)
         distance_from_center = abs(normalized_x - 0.5)
         
-        # Multiplicador: máximo en el centro, mínimo en los bordes
         return 1.5 - distance_from_center
     
     def _translate_object(self, class_name: str) -> str:

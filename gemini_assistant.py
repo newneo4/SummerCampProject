@@ -31,13 +31,10 @@ class GeminiAssistant:
             api_key: API key de Google AI Studio
         """
         genai.configure(api_key=api_key)
-        # Intentamos usar gemini-pro que es más estable si flash falla
-        # Usamos el alias 'gemini-flash-latest' que está disponible en la cuenta del usuario
-        # Este modelo es gratuito y rápido, ideal para esta aplicación
         self.model = genai.GenerativeModel('gemini-flash-latest')
         print("Gemini Assistant iniciado con modelo: gemini-flash-latest")
         self.last_analysis_time = 0
-        self.analysis_cooldown = 5.0  # Analizar cada 5 segundos máximo
+        self.analysis_cooldown = 5.0  
         self.last_description: Optional[SceneDescription] = None
         
     def analyze_scene(self, detections_info: str) -> Optional[SceneDescription]:
@@ -52,14 +49,12 @@ class GeminiAssistant:
         """
         current_time = time.time()
         
-        # Verificar cooldown
         if current_time - self.last_analysis_time < self.analysis_cooldown:
             return self.last_description
         
         self.last_analysis_time = current_time
         
         try:
-            # Prompt especializado para asistencia a ciegos (Solo texto)
             prompt = f"""Eres un asistente visual para una persona ciega.
 Tienes acceso a una lista de objetos detectados por sensores.
 
@@ -74,10 +69,8 @@ Responde en español de forma MUY BREVE y CLARA:
 
 Sé conciso."""
 
-            # Llamar a Gemini (Solo texto)
             response = self.model.generate_content(prompt)
             
-            # Parsear respuesta
             text = response.text
             description = self._parse_response(text)
             self.last_description = description
@@ -86,7 +79,6 @@ Sé conciso."""
             
         except Exception as e:
             print(f"ERROR DETALLADO GEMINI (Analyze Scene): {e}")
-            # Si hay error, intentamos devolver un objeto SceneDescription de error para que la UI sepa
             return SceneDescription(
                 summary=f"Error en IA: {str(e)[:50]}...",
                 navigation_advice="Error técnico",

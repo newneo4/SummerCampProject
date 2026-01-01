@@ -14,9 +14,9 @@ class Detection:
     """Representa un objeto detectado."""
     class_name: str
     confidence: float
-    bbox: tuple  # (x1, y1, x2, y2)
-    center: tuple  # (cx, cy)
-    relative_area: float  # Área relativa al frame
+    bbox: tuple  
+    center: tuple
+    relative_area: float
 
 
 class ObjectDetector:
@@ -37,11 +37,9 @@ class ObjectDetector:
         Returns:
             Lista de detecciones
         """
-        # Obtener dimensiones del frame
         frame_height, frame_width = frame.shape[:2]
         frame_area = frame_height * frame_width
         
-        # Ejecutar detección
         results = self.model(frame, verbose=False, conf=config.CONFIDENCE_THRESHOLD)
         
         detections = []
@@ -53,18 +51,14 @@ class ObjectDetector:
                 continue
                 
             for box in boxes:
-                # Obtener coordenadas
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                 
-                # Calcular centro
                 cx = (x1 + x2) / 2
                 cy = (y1 + y2) / 2
                 
-                # Calcular área relativa
                 box_area = (x2 - x1) * (y2 - y1)
                 relative_area = box_area / frame_area
                 
-                # Obtener clase y confianza
                 class_id = int(box.cls[0])
                 class_name = self.class_names[class_id]
                 confidence = float(box.conf[0])

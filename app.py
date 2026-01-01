@@ -192,7 +192,6 @@ def init_session_state():
     if 'current_danger' not in st.session_state:
         st.session_state.current_danger = "NINGUNO"
     if 'gemini' not in st.session_state:
-        # Inicializar Gemini con la key por defecto
         try:
             st.session_state.gemini = GeminiAssistant(config.GEMINI_API_KEY)
             st.session_state.gemini_enabled = True
@@ -212,13 +211,11 @@ def draw_detections(frame, assessments):
         det = assessment.detection
         color = config.DANGER_COLORS.get(assessment.danger_level, (255, 255, 255))
         
-        # Dibujar bounding box
         cv2.rectangle(frame, 
                      (det.bbox[0], det.bbox[1]), 
                      (det.bbox[2], det.bbox[3]), 
                      color, 3)
         
-        # Etiqueta con nivel de peligro
         label = f"{assessment.danger_level}: {det.class_name}"
         cv2.putText(frame, label,
                    (det.bbox[0], det.bbox[1] - 10),
@@ -233,7 +230,7 @@ def get_detections_summary(assessments) -> str:
         return ""
     
     summary_parts = []
-    for a in assessments[:8]:  # Máximo 8 objetos
+    for a in assessments[:8]:
         summary_parts.append(f"{a.detection.class_name}")
     
     return ", ".join(summary_parts)
@@ -256,16 +253,13 @@ def main():
     """Función principal de la aplicación."""
     init_session_state()
     
-    # Título
     st.markdown('<div class="title">👁️ ASISTENTE VISUAL CON IA</div>', unsafe_allow_html=True)
     
-    # Layout principal
     col1, col2 = st.columns([2, 1])
     
     with col2:
         st.markdown("### 🎛️ Controles")
         
-        # Selector de Cámara
         if not st.session_state.is_running:
             cameras = get_available_cameras()
             if cameras:
@@ -279,7 +273,6 @@ def main():
             else:
                 st.error("No se detectaron cámaras.")
         
-        # Botones de control grandes
         if not st.session_state.is_running:
             st.markdown('<div class="start-btn">', unsafe_allow_html=True)
             if st.button("▶️ INICIAR", key="start"):
@@ -302,32 +295,25 @@ def main():
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # Indicador de peligro actual (Placeholder)
         st.markdown("### ⚠️ Nivel de Peligro")
         danger_placeholder = st.empty()
-        # Estado inicial
         update_danger_ui(danger_placeholder, st.session_state.current_danger)
             
-        # Sección Gemini Manual
         st.markdown("### 🤖 Asistente IA")
         if st.session_state.gemini_enabled and st.session_state.is_running:
             st.markdown('<div class="gemini-btn">', unsafe_allow_html=True)
             if st.button("🎤 DESCRIBIR ESCENA", key="describe_manual"):
-                 # Análisis Manual
                  if st.session_state.detector and st.session_state.current_frame is not None:
                     with st.spinner("Analizando..."):
                         try:
-                            # Hacer una detección fresca para el snapshot actual
                             temp_dets = st.session_state.detector.detect(st.session_state.current_frame)
                             
                             if not temp_dets:
                                 description_text = "No detecto obstáculos visibles al frente."
                             else:
-                                # Convertir detecciones a texto para Gemini
                                 det_strs = [f"{d.class_name}" for d in temp_dets]
                                 summary = ", ".join(det_strs)
                                 
-                                # Llamar a Gemini
                                 description_text = st.session_state.gemini.get_quick_description(summary)
                             
                             st.session_state.last_gemini_description = description_text
@@ -338,10 +324,8 @@ def main():
             st.markdown('</div>', unsafe_allow_html=True)
         
     with col1:
-        # Área de video
         video_placeholder = st.empty()
         
-        # Placeholder para la descripción de Gemini DEBAJO del video
         if st.session_state.last_gemini_description:
             st.markdown(f"""
             <div class="gemini-box">
@@ -350,7 +334,6 @@ def main():
             """, unsafe_allow_html=True)
         
         if st.session_state.is_running:
-            # Usar el índice de cámara seleccionado
             cap = cv2.VideoCapture(st.session_state.get('camera_index', 0))
             
             if not cap.isOpened():
@@ -364,13 +347,10 @@ def main():
                         st.warning("⚠️ Error al leer frame de la cámara")
                         break
                     
-                    # Guardar una copia del frame para análisis manual si se solicita
                     st.session_state.current_frame = frame.copy()
                     
-                    # Detectar objetos
                     detections = st.session_state.detector.detect(frame)
                     
-                    # Evaluar peligro
                     assessments = []
                     frame_width = frame.shape[1]
                     
@@ -379,22 +359,17 @@ def main():
                         if assessment:
                             assessments.append(assessment)
                     
-                    # Ordenar por peligro (el primero es el más peligroso)
                     assessments.sort(key=lambda x: x.danger_score, reverse=True)
                     
-                    # Actualizar nivel de peligro actual y SONIDO
                     if assessments:
                         st.session_state.current_danger = assessments[0].danger_level
                         max_danger_score = assessments[0].danger_score
                         
-                        # Actualizar UI Peligro en tiempo real
                         update_danger_ui(danger_placeholder, st.session_state.current_danger)
                         
-                        # UPDATE BEEP DINÁMICO
                         if st.session_state.beeper:
                             st.session_state.beeper.update(max_danger_score)
                         
-                        # Enviar alertas de voz AUTOMÁTICAS solo para peligros
                         for assessment in assessments:
                             if assessment.danger_score >= 30:
                                 st.session_state.voice.alert(
@@ -404,30 +379,23 @@ def main():
                                 )
                     else:
                         st.session_state.current_danger = "NINGUNO"
-                        # Actualizar UI Peligro en tiempo real (seguro)
                         update_danger_ui(danger_placeholder, "NINGUNO")
                         
-                        # DETENER BEEP SI NO HAY NADA
                         if st.session_state.beeper:
                             st.session_state.beeper.stop()
                     
-                    # Dibujar detecciones
                     frame = draw_detections(frame, assessments)
                     
-                    # Convertir BGR a RGB para Streamlit
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
-                    # Mostrar video
                     video_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
                     
-                    # Pequeña pausa para no saturar
-                    time.sleep(0.01) # Reducido para mejor respuesta de audio
+                    time.sleep(0.01) 
                 
                 cap.release()
                 if st.session_state.beeper:
                     st.session_state.beeper.stop()
         else:
-            # Mostrar placeholder cuando no está activo
             st.info("👆 Presiona **INICIAR** para comenzar la detección")
             st.markdown("""
             <div style="text-align: center; padding: 50px; opacity: 0.5;">

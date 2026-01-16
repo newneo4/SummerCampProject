@@ -1,8 +1,10 @@
+import streamlit as st
+
 """
 Configuración de la aplicación de detección de objetos para ciegos.
 """
 
-GEMINI_API_KEY = "AIzaSyCPMcqYn7zTT3Tht9GagbtKs6uybS_No4A"
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 DANGEROUS_OBJECTS = {
     "car": 10,

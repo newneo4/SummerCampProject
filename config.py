@@ -2,7 +2,7 @@
 Configuración de la aplicación de detección de objetos para ciegos.
 """
 
-GEMINI_API_KEY = "AIzaSyDxsymE8a1LUICLWVPHgZGZywn_ESs2Y7g"
+GEMINI_API_KEY = "AIzaSyCPMcqYn7zTT3Tht9GagbtKs6uybS_No4A"
 
 DANGEROUS_OBJECTS = {
     "car": 10,

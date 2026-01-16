@@ -1,6 +1,7 @@
 """
 Aplicación de Detección de Objetos para Personas Ciegas
 Utiliza YOLOv8 + Gemini AI para detectar objetos y alertar con voz.
+Adaptado para trabajar con imágenes estáticas desde el navegador.
 """
 
 import streamlit as st
@@ -12,6 +13,7 @@ from gemini_assistant import GeminiAssistant
 from audio_alert_manager import AudioAlertManager
 import config
 import time
+from PIL import Image
 
 # Configuración de página
 st.set_page_config(
@@ -32,32 +34,11 @@ st.markdown("""
     
     .stButton > button {
         width: 100%;
-        height: 100px;
-        font-size: 28px !important;
+        height: 60px;
+        font-size: 20px !important;
         font-weight: bold;
-        border-radius: 20px;
+        border-radius: 12px;
         margin: 8px 0;
-    }
-    
-    .start-btn > button {
-        background-color: #00a86b;
-        color: white;
-        border: 4px solid #00ff9d;
-    }
-    
-    .start-btn > button:hover {
-        background-color: #00ff9d;
-        color: #1a1a2e;
-    }
-    
-    .stop-btn > button {
-        background-color: #dc3545;
-        color: white;
-        border: 4px solid #ff6b6b;
-    }
-    
-    .stop-btn > button:hover {
-        background-color: #ff6b6b;
     }
     
     .gemini-btn > button {
@@ -131,12 +112,6 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    .status-text {
-        font-size: 20px;
-        text-align: center;
-        padding: 10px;
-    }
-    
     .gemini-box {
         background: linear-gradient(135deg, #1a73e8 0%, #4285f4 100%);
         padding: 20px;
@@ -147,94 +122,97 @@ st.markdown("""
         margin-top: 20px;
     }
     
-    .gemini-title {
-        font-size: 22px;
-        font-weight: bold;
-        margin-bottom: 10px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
+    /* Ocultar elementos de Streamlit que distraen */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
 </style>
 """, unsafe_allow_html=True)
 
 
 @st.cache_resource
-def get_available_cameras():
-    """Detecta las cámaras disponibles en el sistema."""
-    available_cameras = {}
-    # Probar los primeros 10 índices
-    for i in range(10):
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            ret, _ = cap.read()
-            if ret:
-                available_cameras[f"Cámara {i}"] = i
-            cap.release()
-    return available_cameras
+def load_detector():
+    """Carga y cachea el modelo YOLO."""
+    return ObjectDetector()
 
+@st.cache_resource
+def load_assessor():
+    """Carga y cachea el evaluador de peligro."""
+    return DangerAssessor()
+
+@st.cache_resource
+def get_audio_manager():
+    """Obtiene el gestor de audio."""
+    return AudioAlertManager()
 
 def init_session_state():
     """Inicializa el estado de la sesión."""
-    if 'is_running' not in st.session_state:
-        st.session_state.is_running = False
-    if 'camera_index' not in st.session_state:
-        st.session_state.camera_index = 0
-    if 'detector' not in st.session_state:
-        st.session_state.detector = None
-    if 'assessor' not in st.session_state:
-        st.session_state.assessor = DangerAssessor()
-    if 'audio_manager' not in st.session_state:
-        st.session_state.audio_manager = AudioAlertManager()
-    if 'pending_audio' not in st.session_state:
-        st.session_state.pending_audio = None
+    if 'last_processed_time' not in st.session_state:
+        st.session_state.last_processed_time = 0
+    
     if 'current_danger' not in st.session_state:
         st.session_state.current_danger = "NINGUNO"
+        
     if 'gemini' not in st.session_state:
         try:
             st.session_state.gemini = GeminiAssistant(config.GEMINI_API_KEY)
             st.session_state.gemini_enabled = True
         except Exception as e:
-            st.error(f"Error al conectar con Gemini: {e}")
+            # st.error(f"Error al conectar con Gemini: {e}") 
+            # Silent fail to avoid clustering UI if API key is missing
             st.session_state.gemini_enabled = False
             
     if 'last_gemini_description' not in st.session_state:
         st.session_state.last_gemini_description = None
-    if 'current_frame' not in st.session_state:
-        st.session_state.current_frame = None
+        
+    if 'current_frame_bgr' not in st.session_state:
+        st.session_state.current_frame_bgr = None
 
+def process_uploaded_image(uploaded_file):
+    """
+    Convierte el archivo subido a una imagen OpenCV (BGR).
+    """
+    if uploaded_file is None:
+        return None
+    
+    # Leer archivo como bytes
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    
+    # Decodificar con OpenCV (carga en BGR por defecto)
+    image_bgr = cv2.imdecode(file_bytes, 1)
+    
+    return image_bgr
 
 def draw_detections(frame, assessments):
     """Dibuja las detecciones en el frame."""
+    if frame is None:
+        return None
+        
+    draw_frame = frame.copy()
+    
     for assessment in assessments:
         det = assessment.detection
         color = config.DANGER_COLORS.get(assessment.danger_level, (255, 255, 255))
         
-        cv2.rectangle(frame, 
+        cv2.rectangle(draw_frame, 
                      (det.bbox[0], det.bbox[1]), 
                      (det.bbox[2], det.bbox[3]), 
                      color, 3)
         
         label = f"{assessment.danger_level}: {det.class_name}"
-        cv2.putText(frame, label,
-                   (det.bbox[0], det.bbox[1] - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        
+        # Fondo para el texto para mayor legibilidad
+        (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+        cv2.rectangle(draw_frame, 
+                     (det.bbox[0], det.bbox[1] - text_h - 10), 
+                     (det.bbox[0] + text_w, det.bbox[1]), 
+                     color, -1)
+                     
+        cv2.putText(draw_frame, label,
+                   (det.bbox[0], det.bbox[1] - 5),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     
-    return frame
-
-
-def get_detections_summary(assessments) -> str:
-    """Genera un resumen de las detecciones para Gemini."""
-    if not assessments:
-        return ""
-    
-    summary_parts = []
-    for a in assessments[:8]:
-        summary_parts.append(f"{a.detection.class_name}")
-    
-    return ", ".join(summary_parts)
-
-
+    return draw_frame
 
 def update_danger_ui(placeholder, danger_level):
     """Actualiza el indicador visual de peligro."""
@@ -252,155 +230,125 @@ def main():
     """Función principal de la aplicación."""
     init_session_state()
     
-    # Reproducir audio pendiente si existe
-    if st.session_state.pending_audio:
-        st.audio(st.session_state.pending_audio, format="audio/mp3", autoplay=True)
-        st.session_state.pending_audio = None
+    # Cargar recursos (cacheados)
+    with st.spinner("Cargando sistema de visión..."):
+        detector = load_detector()
+        assessor = load_assessor()
+        audio_manager = get_audio_manager()
 
-    st.markdown('<div class="title">👁️ ASISTENTE VISUAL CON IA</div>', unsafe_allow_html=True)
+    st.markdown('<div class="title">👁️ ASISTENTE VISUAL</div>', unsafe_allow_html=True)
     
-    col1, col2 = st.columns([2, 1])
+    # Layout Principal
+    col_cam, col_info = st.columns([2, 1])
     
-    with col2:
-        st.markdown("### 🎛️ Controles")
+    # --- Columna de Información / Estado ---
+    with col_info:
+        st.markdown("### 🔊 Estado")
         
-        if not st.session_state.is_running:
-            cameras = get_available_cameras()
-            if cameras:
-                camera_options = list(cameras.keys())
-                selected_cam_name = st.selectbox(
-                    "📷 Seleccionar Cámara", 
-                    options=camera_options,
-                    index=0
-                )
-                st.session_state.camera_index = cameras[selected_cam_name]
-            else:
-                st.error("No se detectaron cámaras.")
-        
-        if not st.session_state.is_running:
-            st.markdown('<div class="start-btn">', unsafe_allow_html=True)
-            if st.button("▶️ INICIAR", key="start"):
-                st.session_state.is_running = True
-                if st.session_state.detector is None:
-                    with st.spinner("Cargando modelo YOLO..."):
-                        st.session_state.detector = ObjectDetector()
-                st.session_state.pending_audio = st.session_state.audio_manager.speak_immediate("Sistema iniciado.")
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
-            if st.button("⏹️ DETENER", key="stop"):
-                st.session_state.is_running = False
-                st.session_state.pending_audio = st.session_state.audio_manager.speak_immediate("Sistema detenido.")
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown("### ⚠️ Nivel de Peligro")
+        # Placeholder para indicador de peligro
         danger_placeholder = st.empty()
         update_danger_ui(danger_placeholder, st.session_state.current_danger)
-            
-        st.markdown("### 🤖 Asistente IA")
-        if st.session_state.gemini_enabled and st.session_state.is_running:
+        
+        # Placeholder para audio (importante: debe estar presente para reproducir)
+        audio_placeholder = st.empty()
+        
+        st.markdown("### 🤖 Asistente")
+        if st.session_state.gemini_enabled:
             st.markdown('<div class="gemini-btn">', unsafe_allow_html=True)
-            if st.button("🎤 DESCRIBIR ESCENA", key="describe_manual"):
-                 if st.session_state.detector and st.session_state.current_frame is not None:
-                    with st.spinner("Analizando..."):
+            if st.button("🎤 DESCRIBIR ESCENA", key="describe_btn", disabled=(st.session_state.current_frame_bgr is None)):
+                if st.session_state.current_frame_bgr is not None:
+                    with st.spinner("Analizando con IA..."):
                         try:
-                            temp_dets = st.session_state.detector.detect(st.session_state.current_frame)
+                            # Re-detectar para asegurar frescura o usar lógica existente
+                            detections = detector.detect(st.session_state.current_frame_bgr)
                             
-                            if not temp_dets:
-                                description_text = "No detecto obstáculos visibles al frente."
+                            if not detections:
+                                description_text = "No veo objetos definidos, pero describiré lo que veo en general."
+                                # Aquí podríamos pasar la imagen completa a Gemini si el asistente lo soportara (multimodal)
+                                # Por ahora usamos el resumen de objetos o 'nada'
                             else:
-                                det_strs = [f"{d.class_name}" for d in temp_dets]
-                                summary = ", ".join(det_strs)
+                                det_strs = [f"{d.class_name}" for d in detections]
+                                summary = ", ".join(det_strs) if det_strs else "una escena vacía"
                                 
                                 description_text = st.session_state.gemini.get_quick_description(summary)
                             
                             st.session_state.last_gemini_description = description_text
-                            audio_data = st.session_state.audio_manager.speak_immediate(description_text)
-                            if audio_data:
-                                st.audio(audio_data, format="audio/mp3", autoplay=True)
                             
+                            # Reproducir descripción
+                            audio_bytes = audio_manager.speak_immediate(description_text)
+                            if audio_bytes:
+                                audio_placeholder.audio(audio_bytes, format="audio/mp3", autoplay=True)
+                                
                         except Exception as e:
                             st.error(f"Error Gemini: {e}")
             st.markdown('</div>', unsafe_allow_html=True)
-        
-    with col1:
-        video_placeholder = st.empty()
-        
-        if st.session_state.last_gemini_description:
-            st.markdown(f"""
-            <div class="gemini-box">
-                {st.session_state.last_gemini_description}
-            </div>
-            """, unsafe_allow_html=True)
-        
-        if st.session_state.is_running:
-            cap = cv2.VideoCapture(st.session_state.get('camera_index', 0))
             
-            if not cap.isOpened():
-                st.error(f"❌ No se pudo acceder a la cámara {st.session_state.get('camera_index', 0)}. Verifica que esté conectada.")
-                st.session_state.is_running = False
-            else:
-                while st.session_state.is_running:
-                    ret, frame = cap.read()
-                    
-                    if not ret:
-                        st.warning("⚠️ Error al leer frame de la cámara")
-                        break
-                    
-                    st.session_state.current_frame = frame.copy()
-                    
-                    detections = st.session_state.detector.detect(frame)
-                    
-                    assessments = []
-                    frame_width = frame.shape[1]
-                    
-                    for det in detections:
-                        assessment = st.session_state.assessor.assess(det, frame_width)
-                        if assessment:
-                            assessments.append(assessment)
-                    
-                    assessments.sort(key=lambda x: x.danger_score, reverse=True)
-                    
-                    # Placeholder para audio alertas
-                    if 'audio_status' not in st.session_state:
-                         st.session_state.audio_status = st.empty()
-                    
-                    if assessments:
-                        st.session_state.current_danger = assessments[0].danger_level
-                        max_danger_score = assessments[0].danger_score
-                        
-                        update_danger_ui(danger_placeholder, st.session_state.current_danger)
-                        
-                        audio_bytes = st.session_state.audio_manager.update(max_danger_score, {'assessments': assessments})
-                        if audio_bytes:
-                             st.session_state.audio_status.audio(audio_bytes, format="audio/mp3", autoplay=True)
+            if st.session_state.last_gemini_description:
+                 st.markdown(f'<div class="gemini-box">{st.session_state.last_gemini_description}</div>', unsafe_allow_html=True)
 
-                    else:
-                        st.session_state.current_danger = "NINGUNO"
-                        update_danger_ui(danger_placeholder, "NINGUNO")
-                        
-
-                    
-                    frame = draw_detections(frame, assessments)
-                    
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    
-                    video_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
-                    
-                    time.sleep(0.01) 
+    # --- Columna de Cámara y Visión ---
+    with col_cam:
+        # Input de cámara nativo de Streamlit
+        img_file = st.camera_input("Capturar Entorno", label_visibility="visible")
+        
+        if img_file is not None:
+            # Procesar imagen solo si ha cambiado o es nueva carga
+            # st.camera_input devuelve un objeto nuevo en cada captura
+            
+            # 1. Convertir imagen
+            frame_bgr = process_uploaded_image(img_file)
+            st.session_state.current_frame_bgr = frame_bgr # Guardar para uso de Gemini
+            
+            if frame_bgr is not None:
+                # 2. Detectar
+                detections = detector.detect(frame_bgr)
                 
-                cap.release()
+                # 3. Evaluar Peligro
+                assessments = []
+                frame_width = frame_bgr.shape[1]
+                
+                for det in detections:
+                    assessment = assessor.assess(det, frame_width)
+                    if assessment:
+                        assessments.append(assessment)
+                
+                # Ordenar por peligro
+                assessments.sort(key=lambda x: x.danger_score, reverse=True)
+                
+                # 4. Actualizar Estado Global
+                if assessments:
+                    st.session_state.current_danger = assessments[0].danger_level
+                    max_danger_score = assessments[0].danger_score
+                    
+                    # Generar alerta de audio automática
+                    # Nota: update() gestiona el cooldown internamente
+                    audio_bytes = audio_manager.update(max_danger_score, {'assessments': assessments})
+                    if audio_bytes:
+                         audio_placeholder.audio(audio_bytes, format="audio/mp3", autoplay=True)
+                else:
+                    st.session_state.current_danger = "NINGUNO"
+                    update_danger_ui(danger_placeholder, "NINGUNO")
+                    # Intentar mensaje de "Todo despejado" si veníamos de peligro? (Opcional, puede saturar)
+                
+                # Actualizar UI de peligro tras el cálculo
+                update_danger_ui(danger_placeholder, st.session_state.current_danger)
+                
+                # 5. Dibujar Visualización
+                final_frame = draw_detections(frame_bgr, assessments)
+                
+                # Convertir a RGB para mostrar en Streamlit
+                final_frame_rgb = cv2.cvtColor(final_frame, cv2.COLOR_BGR2RGB)
+                
+                st.image(final_frame_rgb, caption="Análisis de entorno", use_container_width=True)
+                
         else:
-            st.info("👆 Presiona **INICIAR** para comenzar la detección")
+            # Estado inactivo / esperando cámara
+            st.info("📷 Esperando captura de imagen...")
             st.markdown("""
-            <div style="text-align: center; padding: 50px; opacity: 0.5;">
-                <h1>📷</h1>
-                <p>Cámara inactiva</p>
+            <div style="text-align: center; color: #666;">
+                Toma una foto para analizar tu entorno.
             </div>
             """, unsafe_allow_html=True)
-
 
 
 if __name__ == "__main__":

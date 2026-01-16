@@ -8,9 +8,8 @@ import cv2
 import numpy as np
 from detector import ObjectDetector
 from danger_assessment import DangerAssessor
-from voice_alert import VoiceAlert
 from gemini_assistant import GeminiAssistant
-from beep_manager import BeepManager
+from audio_alert_manager import AudioAlertManager
 import config
 import time
 
@@ -185,10 +184,10 @@ def init_session_state():
         st.session_state.detector = None
     if 'assessor' not in st.session_state:
         st.session_state.assessor = DangerAssessor()
-    if 'voice' not in st.session_state:
-        st.session_state.voice = VoiceAlert()
-    if 'beeper' not in st.session_state:
-        st.session_state.beeper = BeepManager()
+    if 'audio_manager' not in st.session_state:
+        st.session_state.audio_manager = AudioAlertManager()
+    if 'pending_audio' not in st.session_state:
+        st.session_state.pending_audio = None
     if 'current_danger' not in st.session_state:
         st.session_state.current_danger = "NINGUNO"
     if 'gemini' not in st.session_state:
@@ -253,6 +252,11 @@ def main():
     """Función principal de la aplicación."""
     init_session_state()
     
+    # Reproducir audio pendiente si existe
+    if st.session_state.pending_audio:
+        st.audio(st.session_state.pending_audio, format="audio/mp3", autoplay=True)
+        st.session_state.pending_audio = None
+
     st.markdown('<div class="title">👁️ ASISTENTE VISUAL CON IA</div>', unsafe_allow_html=True)
     
     col1, col2 = st.columns([2, 1])
@@ -280,18 +284,14 @@ def main():
                 if st.session_state.detector is None:
                     with st.spinner("Cargando modelo YOLO..."):
                         st.session_state.detector = ObjectDetector()
-                st.session_state.voice.start()
-                st.session_state.voice.speak_immediate("Sistema iniciado.")
+                st.session_state.pending_audio = st.session_state.audio_manager.speak_immediate("Sistema iniciado.")
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="stop-btn">', unsafe_allow_html=True)
             if st.button("⏹️ DETENER", key="stop"):
                 st.session_state.is_running = False
-                st.session_state.voice.speak_immediate("Sistema detenido.")
-                st.session_state.voice.stop()
-                if st.session_state.beeper:
-                    st.session_state.beeper.stop()
+                st.session_state.pending_audio = st.session_state.audio_manager.speak_immediate("Sistema detenido.")
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
         
@@ -317,7 +317,9 @@ def main():
                                 description_text = st.session_state.gemini.get_quick_description(summary)
                             
                             st.session_state.last_gemini_description = description_text
-                            st.session_state.voice.speak_immediate(description_text)
+                            audio_data = st.session_state.audio_manager.speak_immediate(description_text)
+                            if audio_data:
+                                st.audio(audio_data, format="audio/mp3", autoplay=True)
                             
                         except Exception as e:
                             st.error(f"Error Gemini: {e}")
@@ -361,28 +363,25 @@ def main():
                     
                     assessments.sort(key=lambda x: x.danger_score, reverse=True)
                     
+                    # Placeholder para audio alertas
+                    if 'audio_status' not in st.session_state:
+                         st.session_state.audio_status = st.empty()
+                    
                     if assessments:
                         st.session_state.current_danger = assessments[0].danger_level
                         max_danger_score = assessments[0].danger_score
                         
                         update_danger_ui(danger_placeholder, st.session_state.current_danger)
                         
-                        if st.session_state.beeper:
-                            st.session_state.beeper.update(max_danger_score)
-                        
-                        for assessment in assessments:
-                            if assessment.danger_score >= 30:
-                                st.session_state.voice.alert(
-                                    assessment.message,
-                                    assessment.detection.class_name,
-                                    assessment.danger_level
-                                )
+                        audio_bytes = st.session_state.audio_manager.update(max_danger_score, {'assessments': assessments})
+                        if audio_bytes:
+                             st.session_state.audio_status.audio(audio_bytes, format="audio/mp3", autoplay=True)
+
                     else:
                         st.session_state.current_danger = "NINGUNO"
                         update_danger_ui(danger_placeholder, "NINGUNO")
                         
-                        if st.session_state.beeper:
-                            st.session_state.beeper.stop()
+
                     
                     frame = draw_detections(frame, assessments)
                     
@@ -393,8 +392,6 @@ def main():
                     time.sleep(0.01) 
                 
                 cap.release()
-                if st.session_state.beeper:
-                    st.session_state.beeper.stop()
         else:
             st.info("👆 Presiona **INICIAR** para comenzar la detección")
             st.markdown("""
